@@ -1,0 +1,34 @@
+# Claude Code
+.claude/
+CLAUDE.md
+
+# Python
+__pycache__/
+
+*.py[cod]
+*$py.class
+.venv
+venv/
+ENV/
+env/
+
+# Spark & Hadoop
+# Ignorar o warehouse do Iceberg para não subir gigabytes de dados binários para o git
+iceberg-warehouse/
+*.out
+*.log
+spark-warehouse/
+metastore_db/
+
+# Docker
+.docker-logs/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
