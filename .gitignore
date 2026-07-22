@@ -21,11 +21,13 @@ env/
 # Spark & Hadoop
 # Ignorar o warehouse do Iceberg para não subir gigabytes de dados binários para o git
 iceberg-warehouse/
+sdp-project/checkpoints/
 *.out
 *.log
 spark-warehouse/
 metastore_db/
 spark-logs/
+
 
 # Docker
 .docker-logs/

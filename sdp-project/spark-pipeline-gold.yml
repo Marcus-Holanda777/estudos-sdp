@@ -1,8 +1,8 @@
-name: "estudos-sdp-oficial-bronze"
+name: "estudos-sdp-oficial-gold"
 libraries:
   - glob:
       include: transformations/gold/**
-storage: "file:///tmp/sdp_checkpoints"
+storage: "file:///opt/spark/sdp-project/checkpoints"
 catalog: "local"
 database: "gold"
 configuration:

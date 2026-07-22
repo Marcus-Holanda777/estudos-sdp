@@ -12,11 +12,13 @@ A proposta é construir manual e didaticamente toda a infraestrutura de um Data 
 2. [⚔️ Comparativo: Databricks Lakeflow Pipelines vs Apache Spark 4.x SDP](#️-comparativo-databricks-lakeflow-pipelines-vs-apache-spark-4x-sdp)
 3. [🧩 Paradigma Declarativo vs. Imperativo](#-paradigma-declarativo-vs-imperativo)
 4. [⚙️ Como o SDP Funciona Por Baixo dos Panos](#️-como-o-sdp-funciona-por-baixo-dos-panos)
-5. [🏗️ Arquitetura Medallion Local do Projeto](#️-arquitetura-medallion-local-do-projeto)
-6. [💡 Estratégia de Desacoplamento dos Pipelines (2 Specs)](#-estratégia-de-desacoplamento-dos-pipelines-2-specs)
-7. [📦 Serviços do Cluster Docker](#-serviços-do-cluster-docker)
-8. [🚀 Como Executar Localmente](#-como-executar-localmente)
-9. [📚 Referências & Inspirações](#-referências--inspirações)
+5. [🔍 Validação de DAGs com `spark-pipelines dry-run`](#-validação-de-dags-com-spark-pipelines-dry-run)
+6. [🏗️ Arquitetura Medallion Local do Projeto](#️-arquitetura-medallion-local-do-projeto)
+7. [💡 Estratégia de Desacoplamento dos Pipelines (2 Specs)](#-estratégia-de-desacoplamento-dos-pipelines-2-specs)
+8. [💾 Gerenciamento Local de Checkpoints e Full Refresh](#-gerenciamento-local-de-checkpoints-e-full-refresh)
+9. [📦 Serviços do Cluster Docker](#-serviços-do-cluster-docker)
+10. [🚀 Como Executar Localmente](#-como-executar-localmente)
+11. [📚 Referências & Inspirações](#-referências--inspirações)
 
 ---
 
@@ -43,6 +45,7 @@ O SDP do Spark 4.x traz para o ecossistema open-source as mesmas abstrações qu
 | **Conexão entre Tabelas** | `dlt.read("tabela_upstream")` | `spark.table("tabela_upstream")` |
 | **Formato de Armazenamento** | Delta Lake (padrão Databricks) | Apache Iceberg ou Delta Lake (Agnóstico) |
 | **CLI / Orquestração** | Databricks Asset Bundles (DABs) / Lakeflow Jobs | `spark-pipelines run --spec ...` (CLI Oficial) |
+| **Validação de DAG (Pre-flight)** | Pipeline Dry Run no Databricks UI/Bundle | `spark-pipelines dry-run --spec ...` |
 | **Custo de Execução** | Requer Workspace Databricks & DBU Cloud | **100% Gratuito & Local (via Docker Compose)** |
 
 ---
@@ -82,6 +85,23 @@ def transform():
 
 ---
 
+## 🔍 Validação de DAGs com `spark-pipelines dry-run`
+
+Antes de processar dados reais ou gravar tabelas no disco, a CLI do SDP permite executar uma validação **dry-run**.
+
+O comando `dry-run`:
+1. **Analisa o Código**: Importa os arquivos Python especificados na spec YAML.
+2. **Constrói o DAG**: Valida as referências entre tabelas (`spark.table(...)`) e resolve a ordem topológica.
+3. **Verifica Erros**: Detecta dependências cíclicas, erros de sintaxe ou colunas ausentes sem ler arquivos ou consumir mensagens do Kafka.
+
+```bash
+# Validar o DAG sem executar dados:
+spark-pipelines dry-run --spec spark-pipeline-bronze-silver.yml
+spark-pipelines dry-run --spec spark-pipeline-gold.yml
+```
+
+---
+
 ## ⚙️ Como o SDP Funciona Por Baixo dos Panos
 
 Quando você executa o comando `spark-pipelines run`:
@@ -101,11 +121,6 @@ sequenceDiagram
     Parser->>Connect: Submete o plano de execução compilado via gRPC (porta 15002)
     Connect->>Iceberg: Cria os namespaces e persiste as Materialized Views / Streaming Tables
 ```
-
-1. **Descoberta e Parsing**: O `spark-pipelines` lê o arquivo de especificação YAML e importa os arquivos Python especificados em `libraries`.
-2. **Construção do DAG**: Ao executar os decorators `@dp`, o SDP intercepta as chamadas a `spark.table(...)` e descobre quem depende de quem, gerando um DAG topológico perfeito.
-3. **Execução no Spark Connect**: O plano de execução compilado é enviado via **Spark Connect (gRPC)** para o servidor Spark no container.
-4. **Gerenciamento de Checkpoints & Estado**: O SDP armazena os checkpoints de streaming em `storage` (ex: `file:///tmp/sdp_checkpoints`), garantindo tolerância a falhas e semântica *exactly-once*.
 
 ---
 
@@ -159,18 +174,6 @@ graph TD
     G_CHANNEL --> ICEBERG["Catálogo Iceberg: local.gold.desempenho_canais"]
 ```
 
-### 1. 🥉 Camada Bronze (Ingestão Bruta)
-* **`bronze.vendas_batch`**: Lê o CSV bruto de vendas mantendo fidelidade à fonte e adicionando metadados de governança (`_ingestion_time` e `_source`).
-* **`bronze.vendas_kafka`**: Ingestão contínua em streaming do tópico Kafka `vendas_medallion_stream` preservando os metadados do Kafka (`offset`, `partition`, `timestamp`).
-
-### 2. 🥈 Camada Silver (Sanitização, Casting & Unificação)
-* **`silver.vendas_batch` & `silver.vendas_kafka`**: Aplica validações de Data Quality (filtro de nulos), casting explícito de tipos (`Timestamp`, `Double`, `Integer`), padronização de strings (`TRIM`, `UPPER`) e cálculo de `valor_total_item`.
-* **`silver.vendas_unificadas`**: Consolida as fontes Batch e Streaming em um único dataset desduplicado pelo `id_venda`.
-
-### 3. 🥇 Camada Gold (Datamarts & Agregações de Negócio)
-* **`gold.resumo_diario_vendas`**: Agregação diária por categoria com métricas de receita total, quantidade de itens, ticket médio e contagem de pedidos únicos.
-* **`gold.desempenho_canais`**: Datamart de desempenho comparativo de vendas entre E-commerce e Loja Física.
-
 ---
 
 ## 💡 Estratégia de Desacoplamento dos Pipelines (2 Specs)
@@ -181,6 +184,7 @@ Para contornar limitações de compilação em memória ao unir tabelas de difer
 sdp-project/
 ├── spark-pipeline-bronze-silver.yml   # Spec 1: Ingestão Bronze + Sanitização Silver
 ├── spark-pipeline-gold.yml            # Spec 2: Datamarts Gold (lê as tabelas Silver persistidas)
+├── checkpoints/                        # Pasta local onde são espelhados os checkpoints das tabelas
 └── transformations/
     ├── bronze_silver/
     │   ├── medallion_batch.py
@@ -188,6 +192,17 @@ sdp-project/
     └── gold/
         └── medallion_gold.py
 ```
+
+---
+
+## 💾 Gerenciamento Local de Checkpoints e Full Refresh
+
+### 📍 Espelhamento Local de Checkpoints
+Em ambos os manifestos de especificação YAML (`spark-pipeline-bronze-silver.yml` e `spark-pipeline-gold.yml`), o caminho de armazenamento foi configurado para:
+```yaml
+storage: "file:///opt/spark/sdp-project/checkpoints"
+```
+Como o diretório `./sdp-project` está montado como um volume no Docker, os estados dos streams e os metadados dos checkpoints são espelhados instantaneamente na sua pasta local **`sdp-project/checkpoints/`**.
 
 ---
 
@@ -212,17 +227,9 @@ Toda a execução do ambiente é centralizada no script de automação [run-sdp.
 # 1. Garanta permissão de execução
 chmod +x run-sdp.sh
 
-# 2. Execute o ciclo completo (Build + Kafka + Pipeline 1 + Pipeline 2 + Queries SQL)
+# 2. Execute o ciclo completo (Build + Kafka + Dry-Run + Run Pipeline 1 & 2 + Queries SQL)
 ./run-sdp.sh
 ```
-
-### Sequência executada pelo script:
-1. **Build e Subida dos Containers**: Sobe o cluster Spark e o Broker Kafka no Docker Compose.
-2. **Criação dos Namespaces**: Executa `CREATE SCHEMA IF NOT EXISTS` para `local.bronze`, `local.silver` e `local.gold` no Apache Iceberg.
-3. **Massa de Dados Streaming**: Publica eventos JSON de teste no tópico Kafka `vendas_medallion_stream`.
-4. **Execução do Pipeline 1 (Bronze/Silver)**: `spark-pipelines run --spec spark-pipeline-bronze-silver.yml`.
-5. **Execução do Pipeline 2 (Gold)**: `spark-pipelines run --spec spark-pipeline-gold.yml`.
-6. **Validação SQL**: Executa consultas `spark-sql` no container `spark-master` exibindo o conteúdo das tabelas em cada camada.
 
 ---
 

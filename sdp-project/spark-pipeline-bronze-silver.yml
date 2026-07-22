@@ -2,7 +2,7 @@ name: "estudos-sdp-oficial-bronze"
 libraries:
   - glob:
       include: transformations/bronze_silver/**
-storage: "file:///tmp/sdp_checkpoints"
+storage: "file:///opt/spark/sdp-project/checkpoints"
 catalog: "local"
 database: "bronze"
 configuration:
