@@ -1,39 +1,117 @@
-# Estudos SDP - Spark Declarative Pipelines 🚀
+# 🚀 Spark Declarative Pipelines (SDP) - Databricks Lakeflow-Like Local Lakehouse
 
-Este é um projeto educacional dedicado ao estudo e implementação de **Spark Declarative Pipelines (SDP)** utilizando o **Apache Spark 4.1.3**, **Apache Kafka** e o catálogo **Apache Iceberg**, estruturado sob a **Arquitetura Medallion (Bronze, Silver e Gold)** com **Execução de Pipelines Desacoplados**.
+Este projeto é um **ambiente de estudos didático e prático** desenvolvido para testar e dominar o **Spark Declarative Pipelines (SDP)** localmente, servindo como um espelho open-source para a experiência do **Databricks Lakeflow Pipelines** (antigo *Delta Live Tables - DLT*) sem depender de custos de nuvem ou assinaturas.
+
+A proposta é construir manual e didaticamente toda a infraestrutura de um Data Lakehouse local com **Apache Spark 4.1.3**, **Apache Kafka** e **Apache Iceberg**, aplicando a **Arquitetura Medallion (Bronze, Silver e Gold)** com processamento unificado **Batch + Streaming**.
 
 ---
 
-## 💡 Estratégia de Desacoplamento de Pipelines (Solução de Orquestração)
+## 📑 Sumário
 
-Para garantir a correta resolução de dependências no Spark Connect sem conflitos de compilação em tempo de inicialização do DAG, o processamento foi desacoplado em **duas especificações de pipeline (`specs`)**:
+1. [💡 O que é o Spark Declarative Pipelines (SDP)?](#-o-que-é-o-spark-declarative-pipelines-sdp)
+2. [⚔️ Comparativo: Databricks Lakeflow Pipelines vs Apache Spark 4.x SDP](#️-comparativo-databricks-lakeflow-pipelines-vs-apache-spark-4x-sdp)
+3. [🧩 Paradigma Declarativo vs. Imperativo](#-paradigma-declarativo-vs-imperativo)
+4. [⚙️ Como o SDP Funciona Por Baixo dos Panos](#️-como-o-sdp-funciona-por-baixo-dos-panos)
+5. [🏗️ Arquitetura Medallion Local do Projeto](#️-arquitetura-medallion-local-do-projeto)
+6. [💡 Estratégia de Desacoplamento dos Pipelines (2 Specs)](#-estratégia-de-desacoplamento-dos-pipelines-2-specs)
+7. [📦 Serviços do Cluster Docker](#-serviços-do-cluster-docker)
+8. [🚀 Como Executar Localmente](#-como-executar-localmente)
+9. [📚 Referências & Inspirações](#-referências--inspirações)
 
-```text
-sdp-project/
-├── spark-pipeline-bronze-silver.yml   # Spec 1: Processa as Camadas Bronze e Silver
-├── spark-pipeline-gold.yml            # Spec 2: Processa a Camada Gold consumindo das tabelas persitidas na Silver
-└── transformations/
-    ├── bronze_silver/
-    │   ├── medallion_batch.py         # Ingestão CSV (bronze.vendas_batch -> silver.vendas_batch)
-    │   └── medallion_streaming.py     # Ingestão Kafka (bronze.vendas_kafka -> silver.vendas_kafka)
-    └── gold/
-        └── medallion_gold.py          # Unificação (silver.vendas_unificadas -> gold.resumo_diario_vendas & gold.desempenho_canais)
+---
+
+## 💡 O que é o Spark Declarative Pipelines (SDP)?
+
+No desenvolvimento tradicional com Apache Spark, o engenheiro de dados precisa escrever código **imperativo**: definir ordens explícitas de execução, gerenciar clusters, controlar loops de `writeStream`, especificar caminhos manuais de checkpoints e coordenar dependências via orquestradores externos (Airflow, Prefect, etc.).
+
+A partir do **Apache Spark 4.1.0+**, o projeto oficial open-source introduziu o módulo **`pyspark.pipelines` (SDP)**, trazendo a capacidade de criar pipelines de dados de forma **declarativa**.
+
+Com o SDP, você apenas declara a **intenção da transformação** (o *o quê* deve ser gerado) utilizando decorators Python como `@dp.materialized_view` e `@dp.table`. O próprio motor do Spark analisa as funções, constrói automaticamente o **Grafo Acíclico Dirigido (DAG)** de dependências e gerencia o ciclo de vida, estado e checkpoints das tabelas.
+
+---
+
+## ⚔️ Comparativo: Databricks Lakeflow Pipelines vs Apache Spark 4.x SDP
+
+O SDP do Spark 4.x traz para o ecossistema open-source as mesmas abstrações que compõem o **Databricks Lakeflow Pipelines** (a nova geração que unificou o antigo *Delta Live Tables - DLT*):
+
+| Recurso / Conceito | Databricks Lakeflow Pipelines (anteriormente DLT) | Apache Spark 4.x SDP (Local / Open-Source) |
+| :--- | :--- | :--- |
+| **Plataforma** | Databricks Lakeflow Platform | Apache Spark 4.x Open-Source |
+| **Paradigma** | Declarativo via decorators | Declarativo via decorators |
+| **Decorator de View Materializada** | `@dlt.table` ou `@dlt.view` | `@dp.materialized_view(name="...")` |
+| **Decorator de Streaming Table** | `@dlt.table` + `spark.readStream` | `@dp.table(name="...")` + `spark.readStream` |
+| **Conexão entre Tabelas** | `dlt.read("tabela_upstream")` | `spark.table("tabela_upstream")` |
+| **Formato de Armazenamento** | Delta Lake (padrão Databricks) | Apache Iceberg ou Delta Lake (Agnóstico) |
+| **CLI / Orquestração** | Databricks Asset Bundles (DABs) / Lakeflow Jobs | `spark-pipelines run --spec ...` (CLI Oficial) |
+| **Custo de Execução** | Requer Workspace Databricks & DBU Cloud | **100% Gratuito & Local (via Docker Compose)** |
+
+---
+
+## 🧩 Paradigma Declarativo vs. Imperativo
+
+### ❌ Modelo Imperativo Tradicional (Spark Clássico)
+```python
+# O desenvolvedor precisa gerenciar tudo manualmente:
+df_raw = spark.readStream.format("kafka").load()
+df_clean = df_raw.filter(...)
+query = (
+    df_clean.writeStream
+    .format("iceberg")
+    .option("checkpointLocation", "/mnt/checkpoint/path")
+    .outputMode("append")
+    .start("catalog.db.table")
+)
+query.awaitTermination()
+```
+* **Desvantagens**: Risco de vazamento de checkpoints, gerenciamento manual de concorrência, dificuldade para encadear múltiplas tabelas streaming e dependência de scripts complexos.
+
+### ✅ Modelo Declarativo (Spark SDP / Lakeflow Style)
+```python
+import pyspark.pipelines as dp
+
+@dp.table(name="vendas_raw")
+def ingest():
+    return spark.readStream.format("kafka").option(...).load()
+
+@dp.materialized_view(name="resumo_vendas")
+def transform():
+    # O SDP detecta automaticamente a dependência de 'vendas_raw'
+    return spark.table("vendas_raw").groupBy("produto").sum("valor")
+```
+* **Vantagens**: Apenas declare a transformação. O SDP resolve a ordem de execução do DAG, gerencia o estado e persiste no catálogo configurado.
+
+---
+
+## ⚙️ Como o SDP Funciona Por Baixo dos Panos
+
+Quando você executa o comando `spark-pipelines run`:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant CLI as CLI (spark-pipelines)
+    participant Parser as SDP Engine (DAG Builder)
+    participant Connect as Spark Connect Server
+    participant Iceberg as Catalog Iceberg
+
+    CLI->>Parser: Lê o manifesto YAML (libraries, storage, catalog)
+    Parser->>Parser: Importa os módulos Python em transformations/
+    Parser->>Parser: Executa os decorators @dp para inspecionar os DataFrames
+    Parser->>Parser: Constrói o DAG de dependências (Topological Sort)
+    Parser->>Connect: Submete o plano de execução compilado via gRPC (porta 15002)
+    Connect->>Iceberg: Cria os namespaces e persiste as Materialized Views / Streaming Tables
 ```
 
-### ⚙️ Como Funciona o Fluxo de Execução em 2 Etapas:
-
-1. **Etapa 1 (`spark-pipeline-bronze-silver.yml`)**:
-   - Executa a ingestão bruta das fontes Batch e Streaming (camada **Bronze**).
-   - Aplica filtros de Data Quality, parsing JSON e sanitização (camada **Silver**).
-   - Persiste fisicamente as tabelas `local.bronze.*` e `local.silver.*` no Apache Iceberg.
-
-2. **Etapa 2 (`spark-pipeline-gold.yml`)**:
-   - Executada em seguida. Como as tabelas `local.silver.vendas_batch` e `local.silver.vendas_kafka` já estão persistidas no Iceberg, a camada **Gold** lê com sucesso as tabelas upstream.
-   - Gera as visões unificadas (`silver.vendas_unificadas`) e os datamarts analíticos de negócio (`gold.resumo_diario_vendas` e `gold.desempenho_canais`).
+1. **Descoberta e Parsing**: O `spark-pipelines` lê o arquivo de especificação YAML e importa os arquivos Python especificados em `libraries`.
+2. **Construção do DAG**: Ao executar os decorators `@dp`, o SDP intercepta as chamadas a `spark.table(...)` e descobre quem depende de quem, gerando um DAG topológico perfeito.
+3. **Execução no Spark Connect**: O plano de execução compilado é enviado via **Spark Connect (gRPC)** para o servidor Spark no container.
+4. **Gerenciamento de Checkpoints & Estado**: O SDP armazena os checkpoints de streaming em `storage` (ex: `file:///tmp/sdp_checkpoints`), garantindo tolerância a falhas e semântica *exactly-once*.
 
 ---
 
-## 🏗️ Schemas & Arquitetura Medallion no SDP
+## 🏗️ Arquitetura Medallion Local do Projeto
+
+O projeto simula um pipeline completo de engenharia de dados em três camadas de maturidade:
 
 ```mermaid
 graph TD
@@ -81,41 +159,70 @@ graph TD
     G_CHANNEL --> ICEBERG["Catálogo Iceberg: local.gold.desempenho_canais"]
 ```
 
+### 1. 🥉 Camada Bronze (Ingestão Bruta)
+* **`bronze.vendas_batch`**: Lê o CSV bruto de vendas mantendo fidelidade à fonte e adicionando metadados de governança (`_ingestion_time` e `_source`).
+* **`bronze.vendas_kafka`**: Ingestão contínua em streaming do tópico Kafka `vendas_medallion_stream` preservando os metadados do Kafka (`offset`, `partition`, `timestamp`).
+
+### 2. 🥈 Camada Silver (Sanitização, Casting & Unificação)
+* **`silver.vendas_batch` & `silver.vendas_kafka`**: Aplica validações de Data Quality (filtro de nulos), casting explícito de tipos (`Timestamp`, `Double`, `Integer`), padronização de strings (`TRIM`, `UPPER`) e cálculo de `valor_total_item`.
+* **`silver.vendas_unificadas`**: Consolida as fontes Batch e Streaming em um único dataset desduplicado pelo `id_venda`.
+
+### 3. 🥇 Camada Gold (Datamarts & Agregações de Negócio)
+* **`gold.resumo_diario_vendas`**: Agregação diária por categoria com métricas de receita total, quantidade de itens, ticket médio e contagem de pedidos únicos.
+* **`gold.desempenho_canais`**: Datamart de desempenho comparativo de vendas entre E-commerce e Loja Física.
+
 ---
 
-## 📦 Serviços do Cluster (`spark-cluster/`)
+## 💡 Estratégia de Desacoplamento dos Pipelines (2 Specs)
+
+Para contornar limitações de compilação em memória ao unir tabelas de diferentes arquivos durante a fase de planejamento do DAG, o projeto segue o padrão de **desacoplamento em 2 pipelines de execução**:
+
+```text
+sdp-project/
+├── spark-pipeline-bronze-silver.yml   # Spec 1: Ingestão Bronze + Sanitização Silver
+├── spark-pipeline-gold.yml            # Spec 2: Datamarts Gold (lê as tabelas Silver persistidas)
+└── transformations/
+    ├── bronze_silver/
+    │   ├── medallion_batch.py
+    │   └── medallion_streaming.py
+    └── gold/
+        └── medallion_gold.py
+```
+
+---
+
+## 📦 Serviços do Cluster Docker
 
 | Container | Função | UI Web / Portas |
 | :--- | :--- | :--- |
 | **`spark-master`** | Coordenador do cluster | `http://localhost:8080` (Master UI)<br>`7077` (RPC Cluster), `4040` (Job UI) |
-| **`spark-connect`** | Servidor Spark Connect (roda o `spark-pipelines run`) | `http://localhost:4050` (Connect UI)<br>`15002` (gRPC Connect) |
+| **`spark-connect`** | Servidor Spark Connect (executa a CLI `spark-pipelines`) | `http://localhost:4050` (Connect UI)<br>`15002` (gRPC Connect) |
 | **`spark-worker-1`** | Nó de execução Worker 1 (2 CPU, 4GB RAM) | `http://localhost:8081` |
 | **`spark-worker-2`** | Nó de execução Worker 2 (2 CPU, 4GB RAM) | `http://localhost:8082` |
 | **`spark-history`** | Servidor de histórico de jobs do Spark | `http://localhost:18080` (History UI) |
-| **`kafka`** | Broker de mensageria Apache Kafka (KRaft) | `kafka:9092` (Interno)<br>`localhost:9094` (Externo) |
+| **`kafka`** | Broker de mensageria Apache Kafka (modo KRaft) | `kafka:9092` (Interno)<br>`localhost:9094` (Externo) |
 
 ---
 
-## 🚀 Como Executar
+## 🚀 Como Executar Localmente
 
-Toda a execução das 2 etapas do pipeline Medallion é automatizada pelo script `./run-sdp.sh`:
+Toda a execução do ambiente é centralizada no script de automação [run-sdp.sh](file:///home/holanda777/projetos/estudos-sdp/run-sdp.sh):
 
 ```bash
 # 1. Garanta permissão de execução
 chmod +x run-sdp.sh
 
-# 2. Execute a automação das 2 etapas
+# 2. Execute o ciclo completo (Build + Kafka + Pipeline 1 + Pipeline 2 + Queries SQL)
 ./run-sdp.sh
 ```
 
-### Sequência executada pelo `run-sdp.sh`:
-```bash
-# Execução da Spec 1 (Bronze + Silver Ingestion/Cleaning)
-docker exec spark-connect bash -c "cd /opt/spark/sdp-project && spark-pipelines run --spec spark-pipeline-bronze-silver.yml"
-
-# Execução da Spec 2 (Gold Datamarts & Business Aggregations)
-docker exec spark-connect bash -c "cd /opt/spark/sdp-project && spark-pipelines run --spec spark-pipeline-gold.yml"
-```
+### Sequência executada pelo script:
+1. **Build e Subida dos Containers**: Sobe o cluster Spark e o Broker Kafka no Docker Compose.
+2. **Criação dos Namespaces**: Executa `CREATE SCHEMA IF NOT EXISTS` para `local.bronze`, `local.silver` e `local.gold` no Apache Iceberg.
+3. **Massa de Dados Streaming**: Publica eventos JSON de teste no tópico Kafka `vendas_medallion_stream`.
+4. **Execução do Pipeline 1 (Bronze/Silver)**: `spark-pipelines run --spec spark-pipeline-bronze-silver.yml`.
+5. **Execução do Pipeline 2 (Gold)**: `spark-pipelines run --spec spark-pipeline-gold.yml`.
+6. **Validação SQL**: Executa consultas `spark-sql` no container `spark-master` exibindo o conteúdo das tabelas em cada camada.
 
 ---
 
@@ -125,17 +232,4 @@ docker exec spark-connect bash -c "cd /opt/spark/sdp-project && spark-pipelines 
 - **[Spark Declarative Pipelines Programming Guide](https://spark.apache.org/docs/4.1.3/declarative-pipelines-programming-guide.html)**: Guia oficial de programação do Spark 4.1.3 SDP.
 
 ---
-
-## 🗺️ Roadmap de Estudos
-
-- [x] Dockerfile manual com Java 21, Spark 4.1.3, Apache Iceberg 1.11.0 e Conector Kafka.
-- [x] Docker Compose com Master, 2x Workers, Connect, History Server e Kafka Broker.
-- [x] Schemas/Namespaces dedicados no Iceberg (`bronze`, `silver`, `gold`).
-- [x] Arquitetura Medallion desacoplada em 2 pipelines (`bronze-silver` e `gold`).
-- [x] Unificação de fontes Batch (CSV) e Streaming (Kafka) na Camada Silver.
-- [x] Geração de Datamarts Analíticos com Views Materializadas na Camada Gold.
-- [x] Automação completa das 2 etapas via [run-sdp.sh](file:///home/holanda777/projetos/estudos-sdp/run-sdp.sh).
-- [ ] Testes de evolução de schema e Time Travel no Apache Iceberg.
-
----
-*Projeto desenvolvido para fins didáticos e de exploração prática das novas capacidades declarativas do Apache Spark 4.x.*
+*Projeto desenvolvido para fins didáticos e de exploração prática do ecossistema Spark 4.x e arquiteturas declarativas de Data Lakehouse.*
