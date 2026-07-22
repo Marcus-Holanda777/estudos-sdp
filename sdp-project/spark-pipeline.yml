@@ -1,7 +1,0 @@
-name: "estudos-sdp-oficial"
-libraries:
-  - glob:
-      include: transformations/**
-storage: "file:///tmp/sdp_checkpoints"
-catalog: "local"
-database: "dbo"

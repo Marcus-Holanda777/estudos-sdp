@@ -5,9 +5,13 @@ services:
     ports:
       - "8080:8080" # Interface Web do Spark Master
       - "7077:7077" # Porta de comunicação interna do cluster
+      - "4040:4040" # Exibe detalhes de execução de tarefas
     volumes:
       - ./scripts:/opt/spark/scripts
       - ../iceberg-warehouse:/opt/spark/iceberg-warehouse
+      - ../sdp-project/data:/tmp/data
+      - ../sdp-project:/opt/spark/sdp-project
+      - ./spark-logs:/opt/spark/event-logs
     networks:
       - spark-network
     command: ["/bin/bash", "/opt/spark/scripts/entrypoint-master.sh"]
@@ -15,29 +19,121 @@ services:
       resources:
         limits:
           cpus: '1.0'
-          memory: 1G
+          memory: 2G
 
+  spark-connect:
+    build: .
+    container_name: spark-connect
+    depends_on:
+      - spark-master
+    ports:
+      - "15002:15002" # Porta do Spark Connect
+      - "4050:4050" # Connect Server Web UI
+    volumes:
+      - ./scripts:/opt/spark/scripts
+      - ../iceberg-warehouse:/opt/spark/iceberg-warehouse
+      - ../sdp-project/data:/tmp/data
+      - ../sdp-project:/opt/spark/sdp-project
+      - ./spark-logs:/opt/spark/event-logs
+    networks:
+      - spark-network
+    command: ["/bin/bash", "/opt/spark/scripts/entrypoint-connect.sh"]
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
 
-  spark-worker:
+  spark-worker-1:
     build: .
     container_name: spark-worker-1
     depends_on:
       - spark-master
     ports:
-      - "8081:8081" # Interface Web do Spark Worker
+      - "8081:8081" # Interface Web do Spark Worker 1
     volumes:
       - ./scripts:/opt/spark/scripts
       - ../iceberg-warehouse:/opt/spark/iceberg-warehouse
+      - ../sdp-project/data:/tmp/data
+      - ../sdp-project:/opt/spark/sdp-project
+      - ./spark-logs:/opt/spark/event-logs
     networks:
       - spark-network
-    command: ["/bin/bash", "/opt/spark/scripts/entrypoint-worker.sh", "spark://spark-master:7077"]
+    command: ["/bin/bash", "/opt/spark/scripts/entrypoint-worker.sh", "spark://spark-master:7077", "8081"]
     deploy:
       resources:
         limits:
           cpus: '2.0'
+          memory: 4G
+
+  spark-worker-2:
+    build: .
+    container_name: spark-worker-2
+    depends_on:
+      - spark-master
+    ports:
+      - "8082:8082" # Interface Web do Spark Worker 2
+    volumes:
+      - ./scripts:/opt/spark/scripts
+      - ../iceberg-warehouse:/opt/spark/iceberg-warehouse
+      - ../sdp-project/data:/tmp/data
+      - ../sdp-project:/opt/spark/sdp-project
+      - ./spark-logs:/opt/spark/event-logs
+    networks:
+      - spark-network
+    command: ["/bin/bash", "/opt/spark/scripts/entrypoint-worker.sh", "spark://spark-master:7077", "8082"]
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+
+  spark-history:
+    build: .
+    container_name: spark-history
+    depends_on:
+      - spark-master
+    ports:
+      - "18080:18080" # Interface Web do Spark History Server
+    volumes:
+      - ./scripts:/opt/spark/scripts
+      - ./spark-logs:/opt/spark/event-logs
+    networks:
+      - spark-network
+    command: ["/bin/bash", "/opt/spark/scripts/entrypoint-history.sh"]
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
           memory: 2G
 
+  kafka:
+    image: apache/kafka:latest
+    container_name: kafka
+    ports:
+      - "9092:9092"
+      - "9094:9094"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9094'
+      KAFKA_OFFERS: 'PLAINTEXT://kafka:9092'
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka:9093'
+      KAFKA_LISTENERS: 'PLAINTEXT://kafka:9092,CONTROLLER://kafka:9093,PLAINTEXT_HOST://0.0.0.0:9094'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_LOG_DIRS: '/tmp/kraft-combined-logs'
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+    networks:
+      - spark-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1.5G
 
 networks:
   spark-network:
     driver: bridge
+

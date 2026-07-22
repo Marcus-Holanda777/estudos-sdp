@@ -1,0 +1,9 @@
+name: "estudos-sdp-oficial-bronze"
+libraries:
+  - glob:
+      include: transformations/bronze_silver/**
+storage: "file:///tmp/sdp_checkpoints"
+catalog: "local"
+database: "bronze"
+configuration:
+    spark.remote: "sc://spark-connect:15002"

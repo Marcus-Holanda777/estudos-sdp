@@ -2,6 +2,12 @@
 .claude/
 CLAUDE.md
 
+# Antigravity AI
+.gemini/
+.antigravity/
+GEMINI.md
+
+
 # Python
 __pycache__/
 
@@ -19,6 +25,7 @@ iceberg-warehouse/
 *.log
 spark-warehouse/
 metastore_db/
+spark-logs/
 
 # Docker
 .docker-logs/
