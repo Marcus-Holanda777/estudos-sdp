@@ -36,9 +36,7 @@ RUN wget ${SPARK_DOWNLOAD_URL} -O /tmp/spark.tgz && \
     wget https://repo1.maven.org/maven2/org/apache/kafka/kafka-clients/3.7.0/kafka-clients-3.7.0.jar -O /opt/spark/jars/kafka-clients.jar && \
     wget https://repo1.maven.org/maven2/org/apache/commons/commons-pool2/2.12.0/commons-pool2-2.12.0.jar -O /opt/spark/jars/commons-pool2.jar
 
-
-
-RUN pip3 install pyspark[pipelines]==${SPARK_VERSION}
+RUN pip3 install pyspark[pipelines]==${SPARK_VERSION} jupyterlab pandas matplotlib
 
 COPY spark-iceberg.conf /opt/spark/conf/spark-defaults.conf
 

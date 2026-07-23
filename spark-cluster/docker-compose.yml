@@ -44,6 +44,28 @@ services:
           cpus: '1.0'
           memory: 2G
 
+  jupyter:
+    build: .
+    container_name: jupyter
+    depends_on:
+      - spark-connect
+    ports:
+      - "8888:8888" # Interface Web do JupyterLab
+    volumes:
+      - ./scripts:/opt/spark/scripts
+      - ../iceberg-warehouse:/opt/spark/iceberg-warehouse
+      - ../sdp-project/data:/tmp/data
+      - ../sdp-project:/opt/spark/sdp-project
+      - ./spark-logs:/opt/spark/event-logs
+    networks:
+      - spark-network
+    command: ["/bin/bash", "/opt/spark/scripts/entrypoint-jupyter.sh"]
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+
   spark-worker-1:
     build: .
     container_name: spark-worker-1
@@ -136,4 +158,3 @@ services:
 networks:
   spark-network:
     driver: bridge
-

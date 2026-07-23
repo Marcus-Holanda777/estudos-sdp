@@ -10,13 +10,18 @@ GEMINI.md
 
 # Python
 __pycache__/
-
 *.py[cod]
 *$py.class
 .venv
 venv/
 ENV/
 env/
+
+# Jupyter Notebooks
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+*.ipynb_checkpoints
+.jupyter/
 
 # Spark & Hadoop
 # Ignorar o warehouse do Iceberg para não subir gigabytes de dados binários para o git

@@ -4,6 +4,6 @@ libraries:
       include: transformations/gold/**
 storage: "file:///opt/spark/sdp-project/checkpoints"
 catalog: "local"
-database: "gold"
+database: "dbo"
 configuration:
     spark.remote: "sc://spark-connect:15002"
