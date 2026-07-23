@@ -146,7 +146,7 @@ sdp-project/
 
 ## 📡 Simulador de Streaming Kafka (IDs Aleatórios 2000-5000)
 
-O script [stream_simulator.sh](file:///home/holanda777/projetos/estudos-sdp/sdp-project/stream_simulator.sh) simula um produtor contínuo de eventos de vendas para o tópico Kafka `vendas_medallion_stream`.
+O script [stream_simulator.sh](estudos-sdp/sdp-project/stream_simulator.sh) simula um produtor contínuo de eventos de vendas para o tópico Kafka `vendas_medallion_stream`.
 
 Para evitar que a desduplicação `dropDuplicates(["id_venda"])` descarte transações recentes, o simulador sorteia IDs dinâmicos de vendas entre **2000 e 5000** (`SEQ=$(( 2000 + (RANDOM % 3001) ))`), garantindo novos dados contínuos nas camadas Silver e Gold.
 
@@ -176,7 +176,7 @@ Todos os arquivos Python em `sdp-project/transformations/` seguem padrões rigor
 
 ## 🚀 Como Executar Localmente
 
-Toda a execução do ambiente é centralizada no script de automação [run-sdp.sh](file:///home/holanda777/projetos/estudos-sdp/run-sdp.sh):
+Toda a execução do ambiente é centralizada no script de automação [run-sdp.sh](estudos-sdp/run-sdp.sh):
 
 ```bash
 # 1. Garanta permissão de execução
