@@ -4,7 +4,7 @@ Este projeto é um **ambiente de estudos didático e prático** desenvolvido par
 
 A proposta é construir manual e didaticamente toda a infraestrutura de um Data Lakehouse local com **Apache Spark 4.1.3**, **Apache Kafka**, **Apache Iceberg** e **JupyterLab**, aplicando a **Arquitetura Medallion (Bronze, Silver e Gold)** com processamento unificado **Batch + Streaming** em um **único database chamado `dbo`**, desacoplado em **2 especificações de pipeline (specs)** para garantir a ordem sequencial determinística de execução no catálogo.
 
-> 🐧 **Compatibilidade de Ambiente**: O script de automação `run-sdp.sh`, os scripts em Bash e o cluster Docker foram desenvolvidos e testados no **Linux (Fedora 44)**.
+> 🐧 **Compatibilidade de Ambiente**: O script de automação `run-sdp.sh`, os scripts em Bash e o cluster Docker foram desenvolvidos e testados especificamente no **Linux (Fedora 44)**.
 
 ---
 
@@ -15,7 +15,7 @@ A proposta é construir manual e didaticamente toda a infraestrutura de um Data 
 3. [🧩 Paradigma Declarativo vs. Imperativo](#-paradigma-declarativo-vs-imperativo)
 4. [⚙️ Como o SDP Funciona Por Baixo dos Panos](#️-como-o-sdp-funciona-por-baixo-dos-panos)
 5. [🔍 Validação de DAGs com `spark-pipelines dry-run`](#-validação-de-dags-com-spark-pipelines-dry-run)
-6. [🏗️ Arquitetura Medallion Unificada (Database `dbo`)](#-arquitetura-medallion-unificada-database-dbo)
+6. [🏗️ Arquitetura Medallion Unificada (Database `dbo`)](#️-arquitetura-medallion-unificada-database-dbo)
 7. [📓 JupyterLab Interativo no Container (Porta 8888)](#-jupyterlab-interativo-no-container-porta-8888)
 8. [💡 Estratégia de Desacoplamento dos Pipelines (2 Specs em `dbo`)](#-estratégia-de-desacoplamento-dos-pipelines-2-specs-em-dbo)
 9. [🛠️ Problemas Enfrentados, Reflexões e Desafios Abertos](#-problemas-enfrentados-reflexões-e-desafios-abertos)
@@ -50,6 +50,50 @@ Com o SDP, você apenas declara a **intenção da transformação** (o *o quê* 
 | **CLI / Orquestração** | Databricks Asset Bundles (DABs) / Lakeflow Jobs | `spark-pipelines run --spec ...` (CLI Oficial) |
 | **Validação de DAG (Pre-flight)** | Pipeline Dry Run no Databricks UI/Bundle | `spark-pipelines dry-run --spec ...` |
 | **Custo de Execução** | Requer Workspace Databricks & DBU Cloud | **100% Gratuito & Local (via Docker Compose)** |
+
+---
+
+## 🧩 Paradigma Declarativo vs. Imperativo
+
+No modelo **imperativo tradicional** (ex: scripts PySpark avulsos), o desenvolvedor dita passo a passo como abrir conexões, configurar salva de arquivos e orquestrar gravações:
+
+```python
+# Exemplo Imperativo Tradicional:
+df = spark.read.csv("vendas.csv")
+df_clean = df.filter(df.valor > 0)
+df_clean.write.format("iceberg").mode("append").saveAsTable("dbo.silver_vendas_batch")
+```
+
+No modelo **declarativo do SDP**, o desenvolvedor declara apenas a função lógica e o contrato de saída, deixando a gestão de estado, ordenação e concorrência a cargo do motor:
+
+```python
+# Exemplo Declarativo SDP:
+@dp.materialized_view
+def silver_vendas_batch() -> DataFrame:
+    df_bronze = spark.table("bronze_vendas_batch")
+    return df_bronze.filter(F.col("valor") > 0)
+```
+
+---
+
+## ⚙️ Como o SDP Funciona Por Baixo dos Panos
+
+1. **Inspeção e Registro (Parsing)**: O CLI `spark-pipelines` analisa o manifesto `.yml` e carrega os módulos Python da pasta `transformations/`, identificando as funções com os decorators `@dp.table` e `@dp.materialized_view`.
+2. **Construção do Grafo de Dependências (DAG)**: Ao detectar referências como `spark.table("tabela_upstream")`, o SDP infere a ordem topológica entre os datasets da pipeline.
+3. **Gestão Automática de Checkpoints**: O diretório configurado em `storage:` registra o progresso de offsets de streaming e as versões de snapshot das views materializadas.
+4. **Execução Distribuída via Spark Connect**: O plano de execução é submetido ao cluster Spark via endpoint gRPC no container `spark-connect`.
+
+---
+
+## 🔍 Validação de DAGs com `spark-pipelines dry-run`
+
+Antes de efetuar qualquer gravação física de dados ou persistência no Apache Iceberg, o SDP oferece o comando `dry-run` para pre-flight validation de esquemas e sintaxe:
+
+```bash
+spark-pipelines dry-run --spec spark-pipeline-bronze-silver.yml
+```
+
+O comando realiza a compilação em memória de todos os datasets, checa se as tabelas upstream existem e valida se há referências circulares no DAG sem modificar o estado dos dados no catálogo.
 
 ---
 
@@ -142,7 +186,7 @@ sdp-project/
 ### 1. 🔍 Erro `TABLE_OR_VIEW_NOT_FOUND` com `spark.table()`
 - **Problema Enfrentado**: Ao colocar todas as transformações em um único arquivo/spec, a chamada `spark.table("silver_vendas_batch")` lançava `TABLE_OR_VIEW_NOT_FOUND` durante o planejamento do DAG em memória.
 - **Solução Encontrada**: **Resolvido via Desacoplamento em 2 Specs**. A Spec 1 grava e commita as tabelas base no Iceberg, e a Spec 2 consome essas tabelas já persistidas.
-- **Reflexão do Desenvolvedor**: Embora o desacoplamento em 2 specs resolva o problema na prática, **no entendimento do desenvolvedor o próprio framework Spark Declarative Pipelines (SDP) deveria tratar essa resolução de dependências automaticamente em seu compilador interno de DAG**, sem exigir a divisão manual do projeto em múltiplos arquivos YAML.
+- **Reflexão**: Embora o desacoplamento em 2 specs resolva o problema na prática, **no meu entendimento o próprio framework Spark Declarative Pipelines (SDP) deveria tratar essa resolução de dependências automaticamente em seu compilador interno de DAG**, sem exigir a divisão manual do projeto em múltiplos arquivos YAML.
 
 ---
 
@@ -160,6 +204,16 @@ Para tentar evitar que a desduplicação `dropDuplicates(["id_venda"])` descarte
 
 ---
 
+## 🎨 Padrões de Código e Formatação Ruff
+
+Todos os arquivos Python em `sdp-project/transformations/` seguem os seguintes padrões:
+
+- **Docstrings sem acentuação gráfica** em cada função de transformação.
+- **Zero comentários inline/cabeçalho (`#`)**.
+- Código formatado e validado com **Ruff** (`ruff format` e `ruff check`).
+
+---
+
 ## 📦 Serviços do Cluster Docker
 
 | Serviço | Porta Host | Descrição |
@@ -174,7 +228,7 @@ Para tentar evitar que a desduplicação `dropDuplicates(["id_venda"])` descarte
 
 ## 🚀 Como Executar Localmente (Linux / Fedora 44)
 
-Toda a execução do ambiente é centralizada no script de automação [run-sdp.sh](run-sdp.sh), projetado para **Linux (Fedora 44)**:
+Toda a execução do ambiente é centralizada no script de automação [run-sdp.sh](run-sdp.sh):
 
 ```bash
 # 1. Garanta permissão de execução
@@ -198,3 +252,12 @@ chmod +x run-sdp.sh
 # 7. Limpar o ambiente completo e parar os containers sem rodar nada:
 ./run-sdp.sh --clean-only
 ```
+
+---
+
+## 📚 Referências & Inspirações
+
+- [Apache Spark 4.1.0 PySpark Pipelines API](https://spark.apache.org/docs/latest/api/python/reference/pyspark.pipelines.html)
+- [Databricks Lakeflow Pipelines & Delta Live Tables (DLT)](https://docs.databricks.com/en/delta-live-tables/index.html)
+- [Apache Iceberg Table Format Specification](https://iceberg.apache.org/docs/latest/)
+- [Apache Kafka KRaft Mode Architecture](https://kafka.apache.org/documentation/#kraft)
