@@ -4,6 +4,8 @@ Este projeto é um **ambiente de estudos didático e prático** desenvolvido par
 
 A proposta é construir manual e didaticamente toda a infraestrutura de um Data Lakehouse local com **Apache Spark 4.1.3**, **Apache Kafka**, **Apache Iceberg** e **JupyterLab**, aplicando a **Arquitetura Medallion (Bronze, Silver e Gold)** com processamento unificado **Batch + Streaming** em um **único database chamado `dbo`**, desacoplado em **2 especificações de pipeline (specs)** para garantir a ordem sequencial determinística de execução no catálogo.
 
+> 🐧 **Compatibilidade de Ambiente**: O script de automação `run-sdp.sh`, os scripts em Bash e o cluster Docker foram desenvolvidos e testados no **Linux (Fedora 44)**.
+
 ---
 
 ## 📑 Sumário
@@ -13,14 +15,15 @@ A proposta é construir manual e didaticamente toda a infraestrutura de um Data 
 3. [🧩 Paradigma Declarativo vs. Imperativo](#-paradigma-declarativo-vs-imperativo)
 4. [⚙️ Como o SDP Funciona Por Baixo dos Panos](#️-como-o-sdp-funciona-por-baixo-dos-panos)
 5. [🔍 Validação de DAGs com `spark-pipelines dry-run`](#-validação-de-dags-com-spark-pipelines-dry-run)
-6. [🏗️ Arquitetura Medallion Unificada (Database `dbo`)](#️-arquitetura-medallion-unificada-database-dbo)
+6. [🏗️ Arquitetura Medallion Unificada (Database `dbo`)](#-arquitetura-medallion-unificada-database-dbo)
 7. [📓 JupyterLab Interativo no Container (Porta 8888)](#-jupyterlab-interativo-no-container-porta-8888)
 8. [💡 Estratégia de Desacoplamento dos Pipelines (2 Specs em `dbo`)](#-estratégia-de-desacoplamento-dos-pipelines-2-specs-em-dbo)
-9. [📡 Simulador de Streaming Kafka (IDs Aleatórios 2000-5000)](#-simulador-de-streaming-kafka-ids-aleatórios-2000-5000)
-10. [🎨 Padrões de Código e Formatação Ruff](#-padrões-de-código-e-formatação-ruff)
-11. [📦 Serviços do Cluster Docker](#-serviços-do-cluster-docker)
-12. [🚀 Como Executar Localmente](#-como-executar-localmente)
-13. [📚 Referências & Inspirações](#-referências--inspirações)
+9. [🛠️ Problemas Enfrentados, Reflexões e Desafios Abertos](#-problemas-enfrentados-reflexões-e-desafios-abertos)
+10. [📡 Simulador de Streaming Kafka (IDs Aleatórios 2000-5000)](#-simulador-de-streaming-kafka-ids-aleatórios-2000-5000)
+11. [🎨 Padrões de Código e Formatação Ruff](#-padrões-de-código-e-formatação-ruff)
+12. [📦 Serviços do Cluster Docker](#-serviços-do-cluster-docker)
+13. [🚀 Como Executar Localmente (Linux / Fedora 44)](#-como-executar-localmente-linux--fedora-44)
+14. [📚 Referências & Inspirações](#-referências--inspirações)
 
 ---
 
@@ -106,26 +109,11 @@ O ambiente inclui um serviço dedicado do **JupyterLab** rodando dentro da rede 
 - **URL de Acesso**: [http://localhost:8888](http://localhost:8888)
 - **Notebook de Exemplo**: `notebooks/playground_medallion.ipynb`
 
-### Exemplo de Conexão no Notebook:
-```python
-from pyspark.sql import SparkSession
-import pyspark.sql.functions as F
-
-# Conexão automática via Spark Connect na rede Docker
-spark = SparkSession.builder \
-    .remote("sc://spark-connect:15002") \
-    .getOrCreate()
-
-# Consultando as tabelas Medallion no banco dbo
-df_silver = spark.table("local.dbo.silver_vendas_unificadas")
-df_silver.show(10)
-```
-
 ---
 
 ## 💡 Estratégia de Desacoplamento dos Pipelines (2 Specs em `dbo`)
 
-Para garantir a ordem de execução topológica no catálogo metastore e evitar conflitos de compilação em memória ao tentar unir tabelas ainda não gravadas no catálogo, o projeto segue o padrão de **desacoplamento em 2 pipelines de execução sequencial**:
+Para garantir a ordem de execução topológica no catálogo Apache Iceberg (`local`), o projeto segue o padrão de **desacoplamento em 2 pipelines de execução sequencial**:
 
 ```text
 sdp-project/
@@ -144,21 +132,31 @@ sdp-project/
 
 ---
 
+## 🛠️ Problemas Enfrentados, Reflexões e Desafios Abertos
+
+> 📌 **Observação Crucial sobre a Reprodutibilidade**:
+> Todos os pipelines, ingestões Medallion e gravações no Apache Iceberg funcionam com **100% de sucesso na 1ª execução (inicialização do ambiente do zero / `--clean`)**. Os comportamentos e desafios listados abaixo ocorrem **exclusivamente nas execuções subsequentes (2ª rodada em diante)** em um ambiente já iniciado e em funcionamento.
+
+---
+
+### 1. 🔍 Erro `TABLE_OR_VIEW_NOT_FOUND` com `spark.table()`
+- **Problema Enfrentado**: Ao colocar todas as transformações em um único arquivo/spec, a chamada `spark.table("silver_vendas_batch")` lançava `TABLE_OR_VIEW_NOT_FOUND` durante o planejamento do DAG em memória.
+- **Solução Encontrada**: **Resolvido via Desacoplamento em 2 Specs**. A Spec 1 grava e commita as tabelas base no Iceberg, e a Spec 2 consome essas tabelas já persistidas.
+- **Reflexão do Desenvolvedor**: Embora o desacoplamento em 2 specs resolva o problema na prática, **no entendimento do desenvolvedor o próprio framework Spark Declarative Pipelines (SDP) deveria tratar essa resolução de dependências automaticamente em seu compilador interno de DAG**, sem exigir a divisão manual do projeto em múltiplos arquivos YAML.
+
+---
+
+### 2. ⚠️ Tabelas Vazias/Zeradas nas Re-execuções (`silver_vendas_unificadas` e `gold_*`)
+- **Problema Enfrentado**: Ao executar o pipeline pela 2ª vez no ambiente já iniciado, a tabela unificada e as tabelas Gold retornavam vazias (0 linhas).
+- **Status do Desafio**: **Em Aberto / Sem Solução Definitiva**. O cálculo incremental de deltas entre fontes batch estáticas (arquivo CSV sem alterações) e fontes streaming (tópico Kafka) resulta em deltas zerados nas re-execuções subsequentes.
+
+---
+
 ## 📡 Simulador de Streaming Kafka (IDs Aleatórios 2000-5000)
 
 O script [stream_simulator.sh](sdp-project/stream_simulator.sh) simula um produtor contínuo de eventos de vendas para o tópico Kafka `vendas_medallion_stream`.
 
-Para evitar que a desduplicação `dropDuplicates(["id_venda"])` descarte transações recentes, o simulador sorteia IDs dinâmicos de vendas entre **2000 e 5000** (`SEQ=$(( 2000 + (RANDOM % 3001) ))`), garantindo novos dados contínuos nas camadas Silver e Gold.
-
----
-
-## 🎨 Padrões de Código e Formatação Ruff
-
-Todos os arquivos Python em `sdp-project/transformations/` seguem padrões rigorosos de qualidade:
-
-- **Docstrings limpas e sem acentuação gráfica** em cada função de transformação.
-- **Zero comentários inline/cabeçalho (`#`)**.
-- Código formatado e validado com **Ruff** (`ruff format` e `ruff check`).
+Para tentar evitar que a desduplicação `dropDuplicates(["id_venda"])` descarte transações recentes, o simulador sorteia IDs dinâmicos de vendas entre **2000 e 5000** (`SEQ=$(( 2000 + (RANDOM % 3001) ))`).
 
 ---
 
@@ -174,9 +172,9 @@ Todos os arquivos Python em `sdp-project/transformations/` seguem padrões rigor
 
 ---
 
-## 🚀 Como Executar Localmente
+## 🚀 Como Executar Localmente (Linux / Fedora 44)
 
-Toda a execução do ambiente é centralizada no script de automação [run-sdp.sh](run-sdp.sh):
+Toda a execução do ambiente é centralizada no script de automação [run-sdp.sh](run-sdp.sh), projetado para **Linux (Fedora 44)**:
 
 ```bash
 # 1. Garanta permissão de execução

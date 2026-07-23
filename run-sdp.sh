@@ -1,8 +1,9 @@
 #!/bin/bash
+# ==============================================================================
+# Script de Automação: Spark Declarative Pipelines (SDP)
+# Compatibilidade: Linux (Desenvolvido e testado especificamente no Fedora 44)
+# ==============================================================================
 
-# ==============================================================================
-# 0. Processamento de Parâmetros e Flags CLI
-# ==============================================================================
 SIMULATE=false
 CLEAN=false
 CLEAN_ONLY=false
@@ -24,7 +25,7 @@ for arg in "$@"; do
       SKIP_DOCKER=true
       ;;
     --help|-h)
-      echo "📖 Uso do script run-sdp.sh:"
+      echo "📖 Uso do script run-sdp.sh (Linux - Fedora 44):"
       echo "  ./run-sdp.sh                          : Execução padrão (sobe docker compose + roda pipelines)"
       echo "  ./run-sdp.sh --skip-docker | -p       : Roda apenas os pipelines sem executar o docker compose"
       echo "  ./run-sdp.sh --simulate | -s          : Ativa o simulador de streaming Kafka durante o pipeline"
@@ -88,7 +89,7 @@ if [ "$SIMULATE" = true ]; then
   ./sdp-project/stream_simulator.sh &
   SIMULATOR_PID=$!
   echo "PID do Simulador: $SIMULATOR_PID"
-  sleep 20 # Permite gerar alguns eventos iniciais antes de rodar os pipelines
+  sleep 15 # Permite gerar alguns eventos iniciais antes de rodar os pipelines
 else
   ID1=$(( 2000 + (RANDOM % 3001) ))
   ID2=$(( 2000 + (RANDOM % 3001) ))
@@ -144,21 +145,21 @@ echo "🥉 CAMADA BRONZE (dbo.bronze_vendas_batch)"
 echo "----------------------------------------------------------------------"
 docker exec spark-master bash -c "spark-sql \
   --master spark://spark-master:7077 \
-  -e 'SELECT id_venda, produto, valor, _source, _ingestion_time FROM local.dbo.bronze_vendas_batch;'"
+  -e 'SELECT id_venda, produto, valor, _source, _ingestion_time FROM dbo.bronze_vendas_batch;'"
 
 echo "----------------------------------------------------------------------"
 echo "🥈 CAMADA SILVER UNIFICADA (dbo.silver_vendas_unificadas)"
 echo "----------------------------------------------------------------------"
 docker exec spark-master bash -c "spark-sql \
   --master spark://spark-master:7077 \
-  -e 'SELECT id_venda, data_venda, produto, categoria, valor_total_item, canal_venda, _source FROM local.dbo.silver_vendas_unificadas;'"
+  -e 'SELECT id_venda, data_venda, produto, categoria, valor_total_item, canal_venda, _source FROM dbo.silver_vendas_unificadas;'"
 
 echo "----------------------------------------------------------------------"
 echo "🥇 CAMADA GOLD (dbo.gold_resumo_diario_vendas & dbo.gold_desempenho_canais)"
 echo "----------------------------------------------------------------------"
 docker exec spark-master bash -c "spark-sql \
   --master spark://spark-master:7077 \
-  -e 'SELECT * FROM local.dbo.gold_resumo_diario_vendas; SELECT * FROM local.dbo.gold_desempenho_canais;'"
+  -e 'SELECT * FROM dbo.gold_resumo_diario_vendas; SELECT * FROM dbo.gold_desempenho_canais;'"
 echo "----------------------------------------------------------------------"
 
 if [ -n "$SIMULATOR_PID" ]; then
