@@ -9,7 +9,13 @@ from pyspark.sql.types import (
     StructType,
 )
 
-spark = SparkSession.getActiveSession()
+spark = SparkSession.active()
+
+ICEBERG_PROPERTIES = {
+    "write.delete.mode": "merge-on-read",
+    "write.merge.mode": "merge-on-read",
+    "write.update.mode": "merge-on-read",
+}
 
 kafka_venda_payload_schema = StructType(
     [
@@ -25,13 +31,7 @@ kafka_venda_payload_schema = StructType(
 )
 
 
-@dp.table(
-    table_properties={
-        "write.delete.mode": "merge-on-read",
-        "write.merge.mode": "merge-on-read",
-        "write.update.mode": "merge-on-read",
-    }
-)
+@dp.table(name="dbo.bronze_vendas_kafka", table_properties=ICEBERG_PROPERTIES)
 def bronze_vendas_kafka() -> DataFrame:
     """Le continuamente as mensagens do topico Kafka 'vendas_medallion_stream' e as grava na Streaming Table 'bronze_vendas_kafka'."""
     return (
@@ -53,10 +53,12 @@ def bronze_vendas_kafka() -> DataFrame:
     )
 
 
-@dp.materialized_view
+@dp.materialized_view(
+    name="dbo.silver_vendas_kafka", table_properties=ICEBERG_PROPERTIES
+)
 def silver_vendas_kafka() -> DataFrame:
     """Parseia o payload JSON bruto da tabela Bronze Streaming do Kafka, aplicando limpeza e tipagem para a camada Silver."""
-    df_bronze = spark.table("bronze_vendas_kafka")
+    df_bronze = spark.table("local.dbo.bronze_vendas_kafka")
 
     df_parsed = df_bronze.withColumn(
         "payload", F.from_json(F.col("raw_payload"), kafka_venda_payload_schema)

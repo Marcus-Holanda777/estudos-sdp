@@ -3,10 +3,18 @@ from pyspark.sql import DataFrame, SparkSession
 import pyspark.sql.functions as F
 from pyspark.sql.types import DoubleType, IntegerType
 
-spark = SparkSession.getActiveSession()
+spark = SparkSession.active()
+
+ICEBERG_PROPERTIES = {
+    "write.delete.mode": "merge-on-read",
+    "write.merge.mode": "merge-on-read",
+    "write.update.mode": "merge-on-read",
+}
 
 
-@dp.materialized_view
+@dp.materialized_view(
+    name="dbo.bronze_vendas_batch", table_properties=ICEBERG_PROPERTIES
+)
 def bronze_vendas_batch() -> DataFrame:
     """Realiza a ingestao bruta dos dados de vendas do arquivo CSV estatico para a camada Bronze Batch."""
     df_raw = spark.read.csv(
@@ -17,10 +25,12 @@ def bronze_vendas_batch() -> DataFrame:
     )
 
 
-@dp.materialized_view
+@dp.materialized_view(
+    name="dbo.silver_vendas_batch", table_properties=ICEBERG_PROPERTIES
+)
 def silver_vendas_batch() -> DataFrame:
     """Aplica higienizacao, filtros de qualidade e calculo de valores derivados para a camada Silver Batch."""
-    df_bronze = spark.table("bronze_vendas_batch")
+    df_bronze = spark.table("local.dbo.bronze_vendas_batch")
 
     return (
         df_bronze.filter(F.col("id_venda").isNotNull() & (F.col("valor") > 0))

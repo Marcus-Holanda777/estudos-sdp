@@ -2,7 +2,7 @@ name: "estudos-sdp-oficial-gold"
 libraries:
   - glob:
       include: transformations/gold/**
-storage: "file:///opt/spark/sdp-project/checkpoints"
+storage: "file:///opt/spark/sdp-project/checkpoints/gold"
 catalog: "local"
 database: "dbo"
 configuration:
